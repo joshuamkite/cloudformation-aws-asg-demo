@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AWS CloudFormation template to create an EC2 Auto Scaling Group with a Launch Template.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Description: EC2 Instance Type
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
+
+  VPCId:
+    Type: String
+    Description: "VPC ID"
+
+  VPCSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of Subnet IDs where the Auto Scaling group instances will be launched
+
+  AllowedCIDR:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: CIDR block allowed to access the instance
+
+Resources:
+  SSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref SSMRole
+
+  SSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM"
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: EC2LaunchTemplate
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}"
+        SecurityGroupIds:
+          - !Ref MySecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt SSMInstanceProfile.Arn
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: "1"
+      MaxSize: "3"
+      DesiredCapacity: "1"
+      VPCZoneIdentifier: !Ref VPCSubnetIds
+      Tags:
+        - Key: Name
+          Value: AutoScaledInstance
+          PropagateAtLaunch: "true"
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for all traffic from specific CIDR
+      VpcId: !Ref VPCId # This needs to be the VPC ID, not the subnet ID
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref AllowedCIDR
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: "0.0.0.0/0"
+
+Outputs:
+  AutoScalingGroupName:
+    Description: The name of the Auto Scaling group
+    Value: !Ref AutoScalingGroup
+  LaunchTemplateName:
+    Description: The name of the launch template
+    Value: !Ref LaunchTemplate
